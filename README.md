@@ -1,42 +1,29 @@
-                ┌──────────────┐
-                │  Producer    │
-                └──────┬───────┘
-                       │
-                ┌──────▼──────────────┐
-                │   Kafka Cluster     │
-                │  (3 Brokers, KRaft) │
-                │                      │
-                │  Topic: demo-topic   │
-                │  Partitions: 3       │
-                │  Replication: 2      │
-                └──────┬───────────────┘
-                       │
-         ┌─────────────┴──────────────┐
-         │                            │
-  Consumer-1 (group-A)         Consumer-2 (group-A)
+# Kafka goal – 3-broker KRaft demo
 
-
-
-
-
-
-  Perfect — now we’ll build a **realistic local KRaft cluster** that demonstrates:
-
-* ✅ Multiple **brokers**
-* ✅ Dedicated **controllers** (KRaft quorum)
-* ✅ Topic with multiple **partitions**
-* ✅ **Replication factor**
-* ✅ **Consumer group**
-* ✅ **Offsets**
-* ✅ **Retention policy**
-* ✅ Producer + 2 consumers
-* ✅ Proper distribution across partitions
-
-This is close to how production Kafka is structured.
+Local Kafka cluster (KRaft) with a producer and two consumers sharing 3 partitions.
 
 ---
 
-# 🧱 Final Architecture
+## Quick start
+
+From the project root:
+
+```bash
+docker compose -f docker-compose.yaml up --build
+```
+
+In a second terminal:
+
+```bash
+bash init-topic.sh
+docker compose -f docker-compose.yaml restart consumer1 consumer2
+```
+
+See **[run.md](run.md)** for the full run flow, logs, and verification commands.
+
+---
+
+## Architecture
 
 ```text
                 ┌──────────────┐
@@ -46,10 +33,8 @@ This is close to how production Kafka is structured.
                 ┌──────▼──────────────┐
                 │   Kafka Cluster     │
                 │  (3 Brokers, KRaft) │
-                │                      │
                 │  Topic: demo-topic   │
                 │  Partitions: 3       │
-                │  Replication: 2      │
                 └──────┬───────────────┘
                        │
          ┌─────────────┴──────────────┐
@@ -57,305 +42,73 @@ This is close to how production Kafka is structured.
   Consumer-1 (group-A)         Consumer-2 (group-A)
 ```
 
+- **Brokers**: `kafka1`, `kafka2`, `kafka3` (Confluent KRaft, port 19092).
+- **Topic**: `demo-topic` — 3 partitions so both consumers share the load.
+- **Consumer group**: `group-A` — each partition is consumed by exactly one of the two consumers.
+
 ---
 
-# 📦 Project Structure
+## Project structure
 
-```bash
-kafka-advanced-kraft/
-│
-├── docker-compose.yml
-├── init-topic.sh
+```text
+kafka-goal/
+├── docker-compose.yaml   # 3 Kafka brokers + producer + consumer1 + consumer2
+├── init-topic.sh         # Create or alter demo-topic to 3 partitions
+├── run.md                # Step-by-step run and verify instructions
 ├── producer/
+│   ├── package.json
+│   ├── producer.js
+│   └── Dockerfile
 └── consumer/
+    ├── package.json
+    ├── consumer.js
+    └── Dockerfile
 ```
 
 ---
 
-# 1️⃣ docker-compose.yml (3 Brokers + KRaft)
+## What this demo shows
 
-We’ll use Bitnami Kafka in KRaft mode.
-
-```yaml
-version: "3.8"
-
-services:
-
-  kafka1:
-    image: bitnami/kafka:3.6
-    hostname: kafka1
-    container_name: kafka1
-    ports:
-      - "9092:9092"
-    environment:
-      - KAFKA_ENABLE_KRAFT=yes
-      - KAFKA_KRAFT_CLUSTER_ID=kraft-cluster-demo
-      - KAFKA_CFG_NODE_ID=1
-      - KAFKA_CFG_PROCESS_ROLES=broker,controller
-      - KAFKA_CFG_CONTROLLER_QUORUM_VOTERS=1@kafka1:9093,2@kafka2:9093,3@kafka3:9093
-      - KAFKA_CFG_LISTENERS=PLAINTEXT://:9092,CONTROLLER://:9093
-      - KAFKA_CFG_ADVERTISED_LISTENERS=PLAINTEXT://kafka1:9092
-      - KAFKA_CFG_CONTROLLER_LISTENER_NAMES=CONTROLLER
-      - KAFKA_CFG_LISTENER_SECURITY_PROTOCOL_MAP=PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT
-      - ALLOW_PLAINTEXT_LISTENER=yes
-
-  kafka2:
-    image: bitnami/kafka:3.6
-    hostname: kafka2
-    container_name: kafka2
-    environment:
-      - KAFKA_ENABLE_KRAFT=yes
-      - KAFKA_KRAFT_CLUSTER_ID=kraft-cluster-demo
-      - KAFKA_CFG_NODE_ID=2
-      - KAFKA_CFG_PROCESS_ROLES=broker,controller
-      - KAFKA_CFG_CONTROLLER_QUORUM_VOTERS=1@kafka1:9093,2@kafka2:9093,3@kafka3:9093
-      - KAFKA_CFG_LISTENERS=PLAINTEXT://:9092,CONTROLLER://:9093
-      - KAFKA_CFG_ADVERTISED_LISTENERS=PLAINTEXT://kafka2:9092
-      - KAFKA_CFG_CONTROLLER_LISTENER_NAMES=CONTROLLER
-      - KAFKA_CFG_LISTENER_SECURITY_PROTOCOL_MAP=PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT
-      - ALLOW_PLAINTEXT_LISTENER=yes
-
-  kafka3:
-    image: bitnami/kafka:3.6
-    hostname: kafka3
-    container_name: kafka3
-    environment:
-      - KAFKA_ENABLE_KRAFT=yes
-      - KAFKA_KRAFT_CLUSTER_ID=kraft-cluster-demo
-      - KAFKA_CFG_NODE_ID=3
-      - KAFKA_CFG_PROCESS_ROLES=broker,controller
-      - KAFKA_CFG_CONTROLLER_QUORUM_VOTERS=1@kafka1:9093,2@kafka2:9093,3@kafka3:9093
-      - KAFKA_CFG_LISTENERS=PLAINTEXT://:9092,CONTROLLER://:9093
-      - KAFKA_CFG_ADVERTISED_LISTENERS=PLAINTEXT://kafka3:9092
-      - KAFKA_CFG_CONTROLLER_LISTENER_NAMES=CONTROLLER
-      - KAFKA_CFG_LISTENER_SECURITY_PROTOCOL_MAP=PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT
-      - ALLOW_PLAINTEXT_LISTENER=yes
-
-  producer:
-    build: ./producer
-    depends_on:
-      - kafka1
-      - kafka2
-      - kafka3
-
-  consumer1:
-    build: ./consumer
-    environment:
-      - CONSUMER_NAME=consumer-1
-    depends_on:
-      - kafka1
-
-  consumer2:
-    build: ./consumer
-    environment:
-      - CONSUMER_NAME=consumer-2
-    depends_on:
-      - kafka1
-```
+- **KRaft** — no Zookeeper; 3 brokers with combined broker+controller role.
+- **Topic** — `demo-topic` with 3 partitions (create or alter via `init-topic.sh`).
+- **Consumer group** — both consumers in `group-A`; Kafka assigns partitions between them.
+- **Producer** — sends messages every ~2 s with keys for partition distribution.
+- **Offsets** — consumers commit offsets; you can inspect with `kafka-consumer-groups --describe --group group-A`.
 
 ---
 
-# 2️⃣ Create Topic with Partitions + Replication + Retention
+## Run and verify (summary)
 
-After cluster starts:
+| Step | Command |
+|------|--------|
+| Start all | `docker compose -f docker-compose.yaml up --build` |
+| Topic (3 partitions) | `bash init-topic.sh` then `docker compose -f docker-compose.yaml restart consumer1 consumer2` |
+| Describe topic | `docker exec kafka1 kafka-topics --describe --topic demo-topic --bootstrap-server kafka1:19092` |
+| Describe group | `docker exec kafka1 kafka-consumer-groups --describe --group group-A --bootstrap-server kafka1:19092` |
+| Stop (keep data) | `docker compose -f docker-compose.yaml down` |
+| Stop + wipe data | `docker compose -f docker-compose.yaml down -v` |
 
-```bash
-docker exec -it kafka1 kafka-topics.sh \
-  --create \
-  --topic demo-topic \
-  --partitions 3 \
-  --replication-factor 2 \
-  --bootstrap-server kafka1:9092 \
-  --config retention.ms=60000
-```
-
-This means:
-
-* 3 partitions
-* Replication factor 2
-* Data retained only 60 seconds
+Full details, logs, and optional steps: **[run.md](run.md)**.
 
 ---
 
-# 3️⃣ Producer (Advanced)
+## Producer / consumer (concept)
 
-Use multiple brokers:
+**Producer** (`producer/producer.js`) — connects to `kafka1:19092`, `kafka2:19092`, `kafka3:19092`, sends to `demo-topic` with keys `key-0`, `key-1`, `key-2` in a loop.
 
-```js
-const { Kafka } = require('kafkajs')
-
-const kafka = new Kafka({
-  clientId: 'advanced-producer',
-  brokers: ['kafka1:9092', 'kafka2:9092', 'kafka3:9092']
-})
-
-const producer = kafka.producer({ idempotent: true })
-
-const run = async () => {
-  await producer.connect()
-
-  let counter = 1
-
-  setInterval(async () => {
-    const message = {
-      key: `key-${counter % 3}`,
-      value: `Message-${counter}`
-    }
-
-    console.log("Producing:", message)
-
-    await producer.send({
-      topic: 'demo-topic',
-      messages: [message]
-    })
-
-    counter++
-  }, 2000)
-}
-
-run()
-```
-
-Key ensures distribution across partitions.
+**Consumer** (`consumer/consumer.js`) — same brokers, subscribes to `demo-topic`, uses `groupId: 'group-A'`. Each message is delivered to exactly one consumer in the group; with 3 partitions and 2 consumers, Kafka splits partitions between them.
 
 ---
 
-# 4️⃣ Consumer (Offset + Partition Awareness)
+## Experiments
 
-```js
-const { Kafka } = require('kafkajs')
-
-const name = process.env.CONSUMER_NAME
-
-const kafka = new Kafka({
-  clientId: name,
-  brokers: ['kafka1:9092','kafka2:9092','kafka3:9092']
-})
-
-const consumer = kafka.consumer({
-  groupId: 'group-A'
-})
-
-const run = async () => {
-  await consumer.connect()
-  await consumer.subscribe({ topic: 'demo-topic' })
-
-  await consumer.run({
-    eachMessage: async ({ topic, partition, message }) => {
-      console.log(
-        `[${name}] 
-         Partition: ${partition} 
-         Offset: ${message.offset}
-         Value: ${message.value.toString()}`
-      )
-    }
-  })
-}
-
-run()
-```
+- **Kill a broker**: `docker stop kafka2` — cluster keeps serving (other brokers and replication).
+- **Add a 3rd consumer**: run another consumer in `group-A` — partitions rebalance.
+- **Different group**: use another `groupId` — that group will also receive all messages (each group gets a full copy).
 
 ---
 
-# 🔍 What You Are Demonstrating
+## Requirements
 
-## 1️⃣ Brokers
-
-You have 3 independent broker nodes.
-
-## 2️⃣ Partitions
-
-`--partitions 3`
-Messages distributed across partitions.
-
-## 3️⃣ Replication
-
-`--replication-factor 2`
-Each partition has:
-
-* 1 Leader
-* 1 Follower
-
-Kill one broker → cluster still works.
-
-## 4️⃣ Consumer Group
-
-Both consumers use:
-
-```js
-groupId: 'group-A'
-```
-
-Kafka balances partitions across them.
-
-## 5️⃣ Offsets
-
-Printed in logs:
-
-```
-Offset: 15
-Offset: 16
-```
-
-Stored in internal topic:
-
-```
-__consumer_offsets
-```
-
-## 6️⃣ Retention
-
-`retention.ms=60000`
-Messages deleted after 60 seconds.
-
----
-
-# 🧪 Experiments You Should Try
-
-### 🔥 Kill a broker
-
-```bash
-docker stop kafka2
-```
-
-Cluster still works (replication).
-
----
-
-### 🔥 Start a 3rd consumer
-
-It will rebalance partitions automatically.
-
----
-
-### 🔥 Change group ID
-
-Change `groupId` → it will reprocess from beginning.
-
----
-
-# 🧠 This Demo Covers
-
-* KRaft quorum controllers
-* Multi-broker cluster
-* Topic partitioning
-* Replication
-* Leader election
-* Consumer group rebalancing
-* Offset storage
-* Retention policy
-* Idempotent producer
-
----
-
-If you want next-level:
-
-* Add transaction producer
-* Add DLQ topic
-* Add manual commit
-* Add exactly-once semantics
-* Add Kafka UI
-* Add monitoring (JMX + Prometheus)
-* Simulate network partition
-
-Tell me how production-grade you want this to be.
+- Docker and Docker Compose.
+- Bash (for `init-topic.sh`) — e.g. Git Bash or WSL on Windows.
